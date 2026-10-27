@@ -71,6 +71,30 @@ def mean_squared_error_sgd(y, tx, initial_w, max_iters, gamma):
 
     return w, loss
 
+#y target values, tx feature matrix
+def least_squares(y, tx):
+    """Linear regression using the least-squares solution.
+
+    Args:
+        y: target values, shape (N,)
+        tx: feature matrix, shape (N, D)
+
+    Returns:
+        w: optimal weight vector, shape (D,)
+        loss: MSE loss (with the 1/2 factor)
+    """
+    A = tx.T @ tx
+    b = tx.T @ y
+
+    # Solve the normal equations: (X^T X)w = X^T y
+    w = np.linalg.solve(A, b)
+
+    # Compute the loss at the optimal weights
+    error = y - tx @ w
+    loss = 0.5 * np.mean(error ** 2)
+
+    return w, loss
+
 #y target values, tx feature matrix, lambda_ regularization parameter
 def ridge_regression(y, tx, lambda_):
     """Ridge regression using normal equations.
@@ -94,5 +118,96 @@ def ridge_regression(y, tx, lambda_):
     # loss WITHOUT the penalty term (consigne du projet)
     error = y - tx @ w
     loss = 0.5 * np.mean(error ** 2)
+
+    return w, loss
+
+#helper function
+def sigmoid(t):
+    """Compute the sigmoid function."""
+    return 1.0 / (1.0 + np.exp(-t))
+
+
+def calculate_logistic_loss(y, tx, w):
+    """Compute the average negative log-likelihood.
+
+    Args:
+        y: Target values, shape (N,), containing 0 or 1.
+        tx: Feature matrix, shape (N, D).
+        w: Weight vector, shape (D,).
+
+    Returns:
+        Scalar loss.
+    """
+    scores = tx @ w
+
+    # Numerically stable equivalent of:
+    # -mean(y * log(sigmoid(scores))
+    #       + (1-y) * log(1-sigmoid(scores)))
+    loss = np.mean(np.logaddexp(0, scores) - y * scores)
+
+    return loss
+
+
+def logistic_regression(y, tx, initial_w, max_iters, gamma):
+    """Logistic regression using gradient descent.
+
+    Args:
+        y: Target values, shape (N,), containing 0 or 1.
+        tx: Feature matrix, shape (N, D).
+        initial_w: Initial weight vector, shape (D,).
+        max_iters: Number of gradient descent iterations.
+        gamma: Learning rate.
+
+    Returns:
+        w: Final weight vector, shape (D,).
+        loss: Final average negative log-likelihood.
+    """
+    w = initial_w.copy()
+    N = len(y)
+
+    for _ in range(max_iters):
+        # Predicted probabilities
+        predictions = sigmoid(tx @ w)
+
+        # Gradient of the logistic loss
+        gradient = tx.T @ (predictions - y) / N
+
+        # Gradient descent update
+        w = w - gamma * gradient
+
+    # Evaluate loss using the final weights
+    loss = calculate_logistic_loss(y, tx, w)
+
+    return w, loss
+
+def reg_logistic_regression(y, tx, lambda_, initial_w, max_iters, gamma):
+    """Regularized logistic regression using gradient descent.
+
+    Args:
+        y: Target values, shape (N,), containing 0 or 1.
+        tx: Feature matrix, shape (N, D).
+        lambda_: Regularization parameter.
+        initial_w: Initial weight vector, shape (D,).
+        max_iters: Number of gradient descent iterations.
+        gamma: Learning rate.
+
+    Returns:
+        w: Final weight vector, shape (D,).
+        loss: Final average negative log-likelihood,
+              excluding the regularization penalty.
+    """
+    w = initial_w.copy()
+    N = len(y)
+
+    for _ in range(max_iters):
+        predictions = sigmoid(tx @ w)
+
+        # Gradient of logistic loss + lambda * ||w||^2
+        gradient = tx.T @ (predictions - y) / N + 2 * lambda_ * w
+
+        w = w - gamma * gradient
+
+    # Exclude the regularization penalty from the returned loss
+    loss = calculate_logistic_loss(y, tx, w)
 
     return w, loss
