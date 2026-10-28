@@ -35,39 +35,33 @@ N_FOLDS = 5
 SEED = 42
 MISSING_THRESHOLD = 0.80
 
-# Each model has its own hyperparameter grid.
-# least_squares has no hyperparameters to tune.
 MODEL_GRIDS = {
-    "least_squares": [
-        {},
-    ],
-    "ridge_regression": [
-        {"lambda_": lam}
-        for lam in [0.001, 0.01, 0.1, 1.0, 10.0]
-    ],
-    "mean_squared_error_gd": [
-        {"gamma": gamma, "max_iters": max_iters}
-        for gamma in [0.001, 0.01, 0.05]
-        for max_iters in [500, 1000, 2000]
-    ],
-    "mean_squared_error_sgd": [
-        {"gamma": gamma, "max_iters": max_iters}
-        for gamma in [0.001, 0.01]
-        for max_iters in [1000, 5000]
-    ],
-    "logistic_regression": [
-        {"gamma": gamma, "max_iters": max_iters}
-        for gamma in [0.001, 0.01, 0.05]
-        for max_iters in [500, 1000, 2000]
-    ],
-    "reg_logistic_regression": [
-        {"lambda_": lam, "gamma": gamma, "max_iters": max_iters}
-        for lam in [0.001, 0.01, 0.1, 1.0]
-        for gamma in [0.001, 0.01]
-        for max_iters in [500, 1000, 2000]
-    ],
-}
 
+     "least_squares": [
+        {"bias": -0.2},
+    ],
+
+    "ridge_regression": [
+        {"lambda_": 0.0001, "bias": -0.25},
+    ],
+
+   "mean_squared_error_gd": [
+      {"gamma": 0.01, "max_iters": 500, "bias": -0.25},
+    ],
+
+   "mean_squared_error_sgd": [
+       {"gamma": 0.0001, "max_iters": 500, "bias": -0.15}
+       ],
+
+       "logistic_regression": [
+        {"gamma": 0.01, "max_iters": 500, "bias": -0.35}
+        ],
+
+    "reg_logistic_regression": [
+        {"lambda_": 0.1, "gamma": 0.01, "max_iters": 500, "bias": -0.35}
+    ],
+
+}
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -230,7 +224,9 @@ def train_and_submit(model_name, params, x_train, y_train, x_test,
         {k: round(v, 4) for k, v in train_metrics.items()},
     )
 
-    y_pred = _predict(x_test_p, w)
+    bias = params.get("bias", 0.0)
+    # bias = params.get("bias", 0.0) if model_name == "least_squares" else 0.0
+    y_pred = _predict(x_test_p, w, bias)
     print(f"Predicted positive rate on test: {(y_pred == 1).mean():.4f}")
 
     create_csv_submission(test_ids, y_pred, OUTPUT_PATH)

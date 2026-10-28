@@ -193,14 +193,17 @@ def _fit_model(model_name, y_train, x_train, params, seed):
     return w
 
 
-def _predict(x, w):
-    """Convert model scores into labels -1 and +1.
+# def _predict(x, w):
+#     """Convert model scores into labels -1 and +1.
 
-    For logistic regression the scores are logits, so a score of zero
-    corresponds to probability 0.5.
-    """
-    return np.where(x @ w >= 0, 1, -1)
+#     For logistic regression the scores are logits, so a score of zero
+#     corresponds to probability 0.5.
+#     """
+#     return np.where(x @ w >= 0, 1, -1)
 
+def _predict(x, w, bias=0.0):
+    scores = x @ w + bias
+    return np.where(scores >= 0, 1, -1)
 
 def evaluate_model(model_name, prepared_folds, params, seed=42):
     """Evaluate one model/configuration on already-prepared folds.
@@ -222,8 +225,10 @@ def evaluate_model(model_name, prepared_folds, params, seed=42):
             params=params,
             seed=seed + fold_number,
         )
+        bias = params.get("bias", 0.0)
+        # bias = params.get("bias", 0.0) if model_name == "least_squares" else 0.0
+        predictions = _predict(fold["x_val"], w, bias)
 
-        predictions = _predict(fold["x_val"], w)
         fold_metrics.append(calculate_metrics(fold["y_val"], predictions))
 
     mean_metrics = {
