@@ -1,4 +1,3 @@
-
 """Cross-validation and evaluation metrics for the BRFSS/MICHD project."""
 
 import numpy as np
@@ -17,8 +16,13 @@ from implementations import (
 METRIC_NAMES = ["accuracy", "precision", "recall", "f1"]
 
 
+def score_key(metrics):
+    """Ranking key used everywhere: mean F1, then mean accuracy."""
+    return (metrics["f1"], metrics["accuracy"])
+
+
 def stratified_k_fold(y, n_folds=5, seed=42):
-    """Create stratified train/validation splits."""
+    """Create stratified train/validation index splits."""
     y = np.asarray(y).ravel()
 
     if n_folds < 2 or n_folds > len(y):
@@ -34,12 +38,14 @@ def stratified_k_fold(y, n_folds=5, seed=42):
         for i, index in enumerate(class_indices):
             fold_indices[i % n_folds].append(index)
 
-    all_indices = np.arange(len(y))
     folds = []
 
     for validation_indices in fold_indices:
         validation_indices = np.asarray(validation_indices, dtype=int)
-        training_indices = np.setdiff1d(all_indices, validation_indices)
+
+        mask = np.ones(len(y), dtype=bool)
+        mask[validation_indices] = False
+        training_indices = np.flatnonzero(mask)
 
         folds.append((training_indices, validation_indices))
 
@@ -81,76 +87,25 @@ def calculate_metrics(y_true, y_pred):
     }
 
 
-def _fit_model(
-    model_name,
-    y_train,
-    x_train,
-    max_iters,
-    gamma,
-    lambda_,
-    seed,
-):
-    """Fit one model and return its weights."""
-    n_features = x_train.shape[1]
-    initial_w = np.zeros(n_features)
-
-    if model_name == "mean_squared_error_gd":
-        w, _ = mean_squared_error_gd(
-            y_train, x_train, initial_w, max_iters, gamma
-        )
-
-    elif model_name == "mean_squared_error_sgd":
-        np.random.seed(seed)
-        w, _ = mean_squared_error_sgd(
-            y_train, x_train, initial_w, max_iters, gamma
-        )
-
-    elif model_name == "least_squares":
-        w, _ = least_squares(y_train, x_train)
-
-    elif model_name == "ridge_regression":
-        w, _ = ridge_regression(y_train, x_train, lambda_)
-
-    elif model_name == "logistic_regression":
-        y01 = (y_train == 1).astype(float)
-        w, _ = logistic_regression(
-            y01, x_train, initial_w, max_iters, gamma
-        )
-
-    elif model_name == "reg_logistic_regression":
-        y01 = (y_train == 1).astype(float)
-        w, _ = reg_logistic_regression(
-            y01, x_train, lambda_, initial_w, max_iters, gamma
-        )
-
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
-
-    return w
-
-
-def _predict(model_name, x, w):
-    """Convert model scores into labels -1 and +1."""
-    scores = x @ w
-
-    # For logistic regression, scores are logits.
-    # A score of zero corresponds to probability 0.5.
-    return np.where(scores >= 0, 1, -1)
-
-
-def evaluate_model(
-    model_name,
+def prepare_folds(
     x,
     y,
     feature_names,
     n_folds=5,
-    max_iters=1000,
-    gamma=0.01,
-    lambda_=0.01,
     seed=42,
     missing_threshold=0.80,
+    dtype=np.float64,
 ):
-    """Evaluate a model using stratified cross-validation."""
+    """Split and preprocess once; reuse for every hyperparameter config.
+
+    Preprocessing is fit on each fold's training part only, so there is no
+    leakage. It does not depend on model hyperparameters, so the result can
+    be shared by all models and all configurations.
+
+    Memory note: each fold holds the whole preprocessed dataset (train +
+    validation), so the cache is about n_folds times the size of the
+    preprocessed matrix. Pass dtype=np.float32 to halve it.
+    """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y).ravel()
     feature_names = list(feature_names)
@@ -164,63 +119,120 @@ def evaluate_model(
     if x.shape[1] != len(feature_names):
         raise ValueError("feature_names must match the columns of x.")
 
-    folds = stratified_k_fold(y, n_folds=n_folds, seed=seed)
+    prepared = []
 
-    fold_metrics = []
-    out_of_fold_predictions = np.empty(len(y), dtype=int)
-    fold_feature_counts = []
-
-    for fold_number, (train_idx, val_idx) in enumerate(folds):
-        x_fold_train = x[train_idx]
-        y_fold_train = y[train_idx]
-
-        x_fold_val = x[val_idx]
-        y_fold_val = y[val_idx]
-
+    for train_idx, val_idx in stratified_k_fold(y, n_folds, seed):
         # Fit preprocessing only on this fold's training data.
         params = fit_preprocessor(
-            x_fold_train,
+            x[train_idx],
             feature_names,
             missing_threshold=missing_threshold,
         )
 
-        x_fold_train = transform_data(
-            x_fold_train, feature_names, params
-        )
-        x_fold_val = transform_data(
-            x_fold_val, feature_names, params
+        x_tr = transform_data(x[train_idx], feature_names, params)
+        x_val = transform_data(x[val_idx], feature_names, params)
+
+        prepared.append(
+            {
+                "x_tr": x_tr.astype(dtype, copy=False),
+                "y_tr": y[train_idx],
+                "x_val": x_val.astype(dtype, copy=False),
+                "y_val": y[val_idx],
+                "val_idx": val_idx,
+                "n_features": x_tr.shape[1],
+            }
         )
 
-        fold_feature_counts.append(x_fold_train.shape[1])
+    return prepared
 
+
+def _fit_model(model_name, y_train, x_train, params, seed):
+    """Fit one model and return its weights.
+
+    `params` is the hyperparameter dict of one grid entry; each model reads
+    only the keys it needs (a missing key raises a KeyError).
+    """
+    initial_w = np.zeros(x_train.shape[1])
+
+    if model_name == "mean_squared_error_gd":
+        w, _ = mean_squared_error_gd(
+            y_train, x_train, initial_w,
+            params["max_iters"], params["gamma"],
+        )
+
+    elif model_name == "mean_squared_error_sgd":
+        np.random.seed(seed)
+        w, _ = mean_squared_error_sgd(
+            y_train, x_train, initial_w,
+            params["max_iters"], params["gamma"],
+        )
+
+    elif model_name == "least_squares":
+        w, _ = least_squares(y_train, x_train)
+
+    elif model_name == "ridge_regression":
+        w, _ = ridge_regression(y_train, x_train, params["lambda_"])
+
+    elif model_name == "logistic_regression":
+        y01 = (y_train == 1).astype(float)
+        w, _ = logistic_regression(
+            y01, x_train, initial_w,
+            params["max_iters"], params["gamma"],
+        )
+
+    elif model_name == "reg_logistic_regression":
+        y01 = (y_train == 1).astype(float)
+        w, _ = reg_logistic_regression(
+            y01, x_train, params["lambda_"], initial_w,
+            params["max_iters"], params["gamma"],
+        )
+
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+
+    return w
+
+
+def _predict(x, w):
+    """Convert model scores into labels -1 and +1.
+
+    For logistic regression the scores are logits, so a score of zero
+    corresponds to probability 0.5.
+    """
+    return np.where(x @ w >= 0, 1, -1)
+
+
+def evaluate_model(model_name, prepared_folds, params, seed=42):
+    """Evaluate one model/configuration on already-prepared folds.
+
+    Args:
+        model_name: Name of the model to fit.
+        prepared_folds: Output of prepare_folds().
+        params: Hyperparameters for this configuration
+            (keys among "gamma", "max_iters", "lambda_").
+        seed: Base seed for stochastic methods (offset by fold number).
+    """
+    fold_metrics = []
+
+    for fold_number, fold in enumerate(prepared_folds):
         w = _fit_model(
             model_name=model_name,
-            y_train=y_fold_train,
-            x_train=x_fold_train,
-            max_iters=max_iters,
-            gamma=gamma,
-            lambda_=lambda_,
+            y_train=fold["y_tr"],
+            x_train=fold["x_tr"],
+            params=params,
             seed=seed + fold_number,
         )
 
-        predictions = _predict(model_name, x_fold_val, w)
-        out_of_fold_predictions[val_idx] = predictions
-
-        fold_metrics.append(
-            calculate_metrics(y_fold_val, predictions)
-        )
+        predictions = _predict(fold["x_val"], w)
+        fold_metrics.append(calculate_metrics(fold["y_val"], predictions))
 
     mean_metrics = {
-        metric: float(
-            np.mean([fold[metric] for fold in fold_metrics])
-        )
+        metric: float(np.mean([fold[metric] for fold in fold_metrics]))
         for metric in METRIC_NAMES
     }
 
     std_metrics = {
-        metric: float(
-            np.std([fold[metric] for fold in fold_metrics])
-        )
+        metric: float(np.std([fold[metric] for fold in fold_metrics]))
         for metric in METRIC_NAMES
     }
 
@@ -228,50 +240,4 @@ def evaluate_model(
         "fold_metrics": fold_metrics,
         "mean_metrics": mean_metrics,
         "std_metrics": std_metrics,
-        "out_of_fold_predictions": out_of_fold_predictions,
-        "fold_feature_counts": fold_feature_counts,
     }
-
-
-def evaluate_models(
-    x,
-    y,
-    feature_names,
-    model_names=None,
-    n_folds=5,
-    max_iters=1000,
-    gamma=0.01,
-    lambda_=0.01,
-    seed=42,
-    missing_threshold=0.80,
-):
-    """Evaluate multiple models using the same cross-validation splits."""
-    if model_names is None:
-        model_names = [
-            "least_squares",
-            "ridge_regression",
-            "mean_squared_error_gd",
-            "mean_squared_error_sgd",
-            "logistic_regression",
-            "reg_logistic_regression",
-        ]
-
-    results = {}
-
-    for model_name in model_names:
-        print(f"Evaluating {model_name}...")
-
-        results[model_name] = evaluate_model(
-            model_name=model_name,
-            x=x,
-            y=y,
-            feature_names=feature_names,
-            n_folds=n_folds,
-            max_iters=max_iters,
-            gamma=gamma,
-            lambda_=lambda_,
-            seed=seed,
-            missing_threshold=missing_threshold,
-        )
-
-    return results
