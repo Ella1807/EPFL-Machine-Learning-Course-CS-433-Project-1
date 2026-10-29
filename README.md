@@ -105,7 +105,7 @@ The prediction rule is `+1` when `x @ w + bias >= 0`, and `-1` otherwise. The `b
 | Logistic regression | 0.01 | 500 | - | -0.35 |
 | Regularized logistic regression | 0.01 | 500 | 0.1 | -0.35 |
 
-These are the currently specified candidate configurations: **one configuration per model**. Additional hyperparameter values can be evaluated by adding entries to the `MODEL_GRIDS` lists in `run.py`.
+These are the currently specified candidate configurations: **one configuration per model**. Additional hyperparameter values can be evaluated by adding entries to the `MODEL_GRIDS` lists in `run.py`. Values were selected by earlier grid searches, and run.py re-evaluates the final candidates.
 
 ## 5. Reproducing the predictions
 
