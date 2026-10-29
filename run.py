@@ -13,18 +13,19 @@ Run with:  python run.py
 import csv
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 from helpers import load_csv_data, create_csv_submission
 from preprocessing import fit_preprocessor, transform_data
 from evaluation import (
     evaluate_model,
     prepare_folds,
+    stratified_k_fold,
     score_key,
     calculate_metrics,
     _fit_model,
     _predict,
 )
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -193,6 +194,157 @@ def run_tuning(x_train, y_train, feature_names):
 
 
 # ---------------------------------------------------------------------------
+# Overfitting and underfitting diagnosis
+# ---------------------------------------------------------------------------
+def diagnose_learning_curve(
+    model_name, params, x, y, feature_names
+):
+    """Compare training and validation F1 for increasing training sizes."""
+
+    print("\n" + "=" * 85)
+    print("OVERFITTING AND UNDERFITTING DIAGNOSIS")
+    print("=" * 85)
+
+    # Create a stratified 80/20 diagnostic train-validation split.
+    folds = stratified_k_fold(y, n_folds=5, seed=SEED)
+    train_idx, val_idx = folds[0]
+
+    x_train = x[train_idx]
+    y_train = y[train_idx]
+    x_val = x[val_idx]
+    y_val = y[val_idx]
+
+    fractions = [0.10, 0.25, 0.50, 0.75, 1.00]
+    train_f1_scores = []
+    val_f1_scores = []
+
+    rng = np.random.default_rng(SEED)
+
+    for fraction in fractions:
+        # Sample each class separately to preserve class proportions.
+        selected_indices = []
+
+        for label in np.unique(y_train):
+            class_indices = np.flatnonzero(y_train == label)
+            rng.shuffle(class_indices)
+
+            n_samples = max(
+                1, int(fraction * len(class_indices))
+            )
+            selected_indices.extend(class_indices[:n_samples])
+
+        selected_indices = np.asarray(selected_indices, dtype=int)
+        rng.shuffle(selected_indices)
+
+        x_subset = x_train[selected_indices]
+        y_subset = y_train[selected_indices]
+
+        # Fit preprocessing only on the current training subset.
+        prep_params = fit_preprocessor(
+            x_subset,
+            feature_names,
+            missing_threshold=MISSING_THRESHOLD,
+        )
+
+        x_subset_p = transform_data(
+            x_subset, feature_names, prep_params
+        )
+        x_val_p = transform_data(
+            x_val, feature_names, prep_params
+        )
+
+        # Train the selected model with its best CV parameters.
+        w = _fit_model(
+            model_name=model_name,
+            y_train=y_subset,
+            x_train=x_subset_p,
+            params=params,
+            seed=SEED,
+        )
+
+        bias = params.get("bias", 0.0)
+
+        train_predictions = _predict(x_subset_p, w, bias)
+        val_predictions = _predict(x_val_p, w, bias)
+
+        train_f1 = calculate_metrics(
+            y_subset, train_predictions
+        )["f1"]
+        val_f1 = calculate_metrics(
+            y_val, val_predictions
+        )["f1"]
+
+        train_f1_scores.append(train_f1)
+        val_f1_scores.append(val_f1)
+
+        print(
+            f"Training fraction: {fraction:>5.0%} | "
+            f"Training F1: {train_f1:.4f} | "
+            f"Validation F1: {val_f1:.4f} | "
+            f"F1 gap: {train_f1 - val_f1:.4f}"
+        )
+
+    # Plot and save the learning curve.
+    plt.figure(figsize=(8, 5))
+    plt.plot(
+        [f * 100 for f in fractions],
+        train_f1_scores,
+        marker="o",
+        label="Training F1",
+    )
+    plt.plot(
+        [f * 100 for f in fractions],
+        val_f1_scores,
+        marker="o",
+        label="Validation F1",
+    )
+
+    plt.xlabel("Fraction of diagnostic training split (%)")
+    plt.ylabel("F1-score")
+    plt.title(f"Learning Curve - {model_name}")
+    plt.xticks([10, 25, 50, 75, 100])
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("learning_curve.png", dpi=300)
+    plt.close()
+
+    final_gap = train_f1_scores[-1] - val_f1_scores[-1]
+
+    print("\nDiagnosis:")
+    print(
+        f"At the largest training size, training F1 = "
+        f"{train_f1_scores[-1]:.4f} and validation F1 = "
+        f"{val_f1_scores[-1]:.4f}."
+    )
+    print(f"Final training-validation F1 gap: {final_gap:.4f}")
+
+    if final_gap > 0.05:
+        print(
+            "The gap suggests possible overfitting: performance "
+            "on the training subset is noticeably higher than "
+            "on the validation set."
+        )
+    elif (
+        train_f1_scores[-1] < 0.50
+        and val_f1_scores[-1] < 0.50
+    ):
+        print(
+            "Both F1-scores are relatively low and close together. "
+            "This may indicate underfitting or limited predictive "
+            "performance; further investigation is needed."
+        )
+    else:
+        print(
+            "There is no large training-validation F1 gap at the "
+            "largest training size, so there is limited evidence "
+            "of strong overfitting from this diagnostic."
+        )
+
+    print("Learning curve saved to learning_curve.png")
+
+
+# ---------------------------------------------------------------------------
 # Final training and submission
 # ---------------------------------------------------------------------------
 def train_and_submit(model_name, params, x_train, y_train, x_test,
@@ -247,12 +399,18 @@ def main():
     print(f"Original number of features: {x_train.shape[1]}")
     print(f"Positive target rate: {(y_train == 1).mean():.4f}")
 
+    
     model_name, params = run_tuning(x_train, y_train, feature_names)
 
-    train_and_submit(
-        model_name, params, x_train, y_train, x_test, test_ids,
-        feature_names,
+    diagnose_learning_curve(
+    model_name, params, x_train, y_train, feature_names
     )
+
+    train_and_submit(
+    model_name, params, x_train, y_train, x_test, test_ids,
+    feature_names,
+    )
+
 
 
 if __name__ == "__main__":
