@@ -31,9 +31,9 @@ from evaluation import (
 # ---------------------------------------------------------------------------
 DATA_DIR = "dataset"
 OUTPUT_PATH = "submission.csv"
-N_FOLDS = 5
+N_FOLDS = 6
 SEED = 42
-MISSING_THRESHOLD = 0.80
+MISSING_THRESHOLD = 0.85
 
 MODEL_GRIDS = {
 
