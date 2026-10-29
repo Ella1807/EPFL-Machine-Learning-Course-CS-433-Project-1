@@ -3,7 +3,7 @@
 
 This repository contains our solution for EPFL's CS-433 Machine Learning Project 1 (Fall 2026). The task is to predict whether a respondent has myocardial infarction or coronary heart disease (MICHD), using health and lifestyle variables from the 2015 Behavioral Risk Factor Surveillance System (BRFSS) dataset.
 
-The project includes exploratory data analysis, BRFSS-specific preprocessing, six machine learning algorithms implemented from scratch using NumPy, cross-validation, model comparison, and generation of predictions for the AIcrowd competition.
+The project includes exploratory data analysis, BRFSS-specific preprocessing, six machine learning algorithms implemented from scratch using NumPy, cross-validation, model comparison, an ablation study, an overfitting/underfitting analysis, and generation of predictions for the AIcrowd competition.
 
 ## 1. Requirements
 
@@ -107,7 +107,32 @@ The prediction rule is `+1` when `x @ w + bias >= 0`, and `-1` otherwise. The `b
 
 These are the currently specified candidate configurations: **one configuration per model**. Additional hyperparameter values can be evaluated by adding entries to the `MODEL_GRIDS` lists in `run.py`. Values were selected by earlier grid searches, and run.py re-evaluates the final candidates.
 
-## 5. Reproducing the predictions
+## 5. Ablation study
+
+We performed an **ablation study** on the best-performing model, **ridge regression**, to measure how much individual choices contributed to its validation performance. Each variant changes one component of the final pipeline at a time. Results are reported as the mean accuracy and the mean +/- standard deviation of F1 across **6 stratified cross-validation folds**.
+
+| Ridge regression variant | Accuracy | F1 score (mean +/- std) |
+| --- | ---: | ---: |
+| Always predict the negative class (baseline) | 0.9117 | 0.0000 |
+| **Final pipeline** | **0.8646** | **0.4173 +/- 0.0076** |
+| No decision-threshold shift (`bias = 0`) | 0.6657 | 0.3198 +/- 0.0029 |
+| No special-code recoding | 0.8621 | 0.4077 +/- 0.0072 |
+| No leakage-feature removal | 0.8646 | 0.4173 +/- 0.0076 |
+| Missing-value threshold changed from 0.90 to 0.80 | 0.8647 | 0.4171 +/- 0.0073 |
+
+The **decision-threshold shift** had the largest impact: removing it reduced the F1 score from **0.4173 to 0.3198**. Correctly recoding the special BRFSS response codes also improved F1 (by approximately **0.010**). Removing the potential leakage features or changing the missing-value threshold from 90% to 80% had little or no effect on these results. The always-negative baseline illustrates why accuracy alone is insufficient for this imbalanced task.
+
+Because the prediction bias was selected using the same cross-validation folds used to report performance, the reported F1 estimates may be slightly optimistic. The full ablation results and discussion are provided in the project report.
+
+## 6. Overfitting and underfitting analysis
+
+We investigated potential **overfitting and underfitting** by generating a **learning curve for ridge regression**, the selected model. A diagnostic training split was sampled at **10%, 25%, 50%, 75% and 100%** of its size. At each fraction, we fitted the model and measured F1 on both the corresponding training subset and a **fixed validation set**.
+
+The learning curve shows that training F1 generally decreases as more examples are added, while validation F1 increases slightly and then stabilizes. The gap between training and validation performance is relatively small at the largest training sizes, suggesting **no strong evidence of overfitting** in this diagnostic. The validation curve also approaches a plateau, indicating that simply increasing the training fraction yields limited additional improvement within the tested range.
+
+The learning-curve plot is included in the project report (page 2). **These ablation and learning-curve experiments are additional diagnostics described in the report; the current `run.py` runs the final model comparison and submission pipeline, not the separate diagnostic experiments.**
+
+## 7. Reproducing the predictions
 
 From the repository root, after placing the three data files in `dataset/`, run:
 
@@ -136,7 +161,7 @@ The two rows above illustrate the format; they are not actual predictions.
 
 The code sets `SEED = 42` to make random splitting and stochastic training reproducible. Exact reproduction of a previously uploaded AIcrowd CSV must still be verified against that submission, using the same input data and project version.
 
-## 6. Exploratory data analysis
+## 8. Exploratory data analysis
 
 To reproduce the exploratory analysis and visualizations, install the optional visualization dependencies and open:
 
@@ -148,7 +173,7 @@ Execute the notebook cells in order. The notebook explores the class distributio
 
 **Important:** the notebook supports exploration and reporting; the actual preprocessing and predictions are defined in `preprocessing.py` and `run.py`.
 
-## 7. Submission and reproducibility notes
+## 9. Submission and reproducibility notes
 
 - Preserve the filenames `x_train.csv`, `y_train.csv`, and `x_test.csv` and the `dataset/` directory name.
 - Run the scripts from the repository root so that local imports and relative paths work.
