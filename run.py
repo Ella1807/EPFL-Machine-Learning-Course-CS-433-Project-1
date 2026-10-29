@@ -50,7 +50,7 @@ MODEL_GRIDS = {
     ],
 
    "mean_squared_error_sgd": [
-       {"gamma": 0.0001, "max_iters": 500, "bias": -0.15}
+       {"gamma": 0.0001, "max_iters": 100000, "bias": -0.30}
        ],
 
        "logistic_regression": [
