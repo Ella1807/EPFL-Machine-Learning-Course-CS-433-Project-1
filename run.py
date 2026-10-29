@@ -33,7 +33,7 @@ from evaluation import (
 DATA_DIR = "dataset"
 OUTPUT_PATH = "submission.csv"
 N_FOLDS = 6
-SEED = 42
+SEED = 42 
 MISSING_THRESHOLD = 0.90
 
 MODEL_GRIDS = {
