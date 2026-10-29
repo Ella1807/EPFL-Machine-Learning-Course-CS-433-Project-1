@@ -33,7 +33,7 @@ DATA_DIR = "dataset"
 OUTPUT_PATH = "submission.csv"
 N_FOLDS = 6
 SEED = 42
-MISSING_THRESHOLD = 0.85
+MISSING_THRESHOLD = 0.90
 
 MODEL_GRIDS = {
 
@@ -217,15 +217,20 @@ def train_and_submit(model_name, params, x_train, y_train, x_test,
         seed=SEED,
     )
 
-    # Sanity check only: training metrics are optimistic, use CV instead.
-    train_metrics = calculate_metrics(y_train, _predict(x_train_p, w))
+    # Get the bias selected during cross-validation
+    bias = params.get("bias", 0.0)
+
+    # Training metrics (sanity check only)
+    train_metrics = calculate_metrics(
+        y_train, _predict(x_train_p, w, bias)
+    )
+
     print(
         "Training metrics:",
         {k: round(v, 4) for k, v in train_metrics.items()},
     )
 
-    bias = params.get("bias", 0.0)
-    # bias = params.get("bias", 0.0) if model_name == "least_squares" else 0.0
+    # Final predictions on test set
     y_pred = _predict(x_test_p, w, bias)
     print(f"Predicted positive rate on test: {(y_pred == 1).mean():.4f}")
 
